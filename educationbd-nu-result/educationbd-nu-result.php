@@ -204,7 +204,7 @@ function edubd_nu_result_extract_config($html, $base_url) {
     $hidden = array();
     $fields = array();
     $selects = array();
-    $captcha = array('image_url'=>'','image_data'=>'','input_name'=>'','input_id'=>'');
+    $captcha = array('image_url'=>'','image_data'=>'','input_name'=>'','input_id'=>'','question'=>'');
 
     foreach ($form->getElementsByTagName('input') as $input) {
         $name = trim($input->getAttribute('name'));
@@ -224,6 +224,13 @@ function edubd_nu_result_extract_config($html, $base_url) {
             $captcha['input_name'] = $name;
             $captcha['input_id'] = $id;
             $parent = $input->parentNode;
+            // Text-based question (e.g. "9 + 5 = ?"): show it to the visitor, who must answer it.
+            $anc = $input->parentNode; $depth = 0;
+            while ($anc && $anc->nodeType === XML_ELEMENT_NODE && $depth < 4) {
+                $t = trim(preg_replace('/\s+/', ' ', $anc->textContent));
+                if (strpos($t, '=') !== false && strlen($t) < 160) { $captcha['question'] = $t; break; }
+                $anc = $anc->parentNode; $depth++;
+            }
             if ($parent) {
                 foreach ($parent->getElementsByTagName('img') as $img) { $captcha['image_url'] = edubd_nu_result_resolve_url($base_url, $img->getAttribute('src')); break; }
             }
@@ -434,14 +441,17 @@ function edubd_nu_result_ajax_submit() {
 add_action('wp_ajax_edubd_nu_submit','edubd_nu_result_ajax_submit');
 add_action('wp_ajax_nopriv_edubd_nu_submit','edubd_nu_result_ajax_submit');
 
-function edubd_nu_result_shortcode() {
+function edubd_nu_result_shortcode($atts = array()) {
     wp_enqueue_style('edubd-nu-result');
+    $atts = shortcode_atts(array('type'=>''), $atts, 'educationbd_nu_result');
+    $fixed = sanitize_key($atts['type']);
+    if (!isset(edubd_nu_result_types()[$fixed])) $fixed = '';
     $types=edubd_nu_result_types(); $nonce=wp_create_nonce('edubd_nu_proxy'); $ajax=admin_url('admin-ajax.php');
     ob_start(); ?>
     <div class="edubd-nu-result" id="edubd-nu-result-app">
-      <div class="edubd-hero"><div class="edubd-badge">NATIONAL UNIVERSITY</div><h1>NU Result</h1><p>Check your result directly from the National University server.</p></div>
-      <div class="edubd-tabs" role="tablist">
-        <?php foreach($types as $key=>$label): ?><button type="button" class="edubd-tab <?php echo $key==='honours'?'active':''; ?>" data-result-type="<?php echo esc_attr($key); ?>"><?php echo esc_html($label); ?></button><?php endforeach; ?>
+      <div class="edubd-hero"><div class="edubd-badge">NATIONAL UNIVERSITY</div><h1><?php echo $fixed ? esc_html(edubd_nu_result_types()[$fixed]).' Result' : 'NU Result'; ?></h1><p>Check your result directly from the National University server.</p></div>
+      <div class="edubd-tabs" role="tablist" <?php echo $fixed ? 'style="display:none"' : ''; ?>>
+        <?php foreach($types as $key=>$label): ?><button type="button" class="edubd-tab <?php echo $key===($fixed?:'honours')?'active':''; ?>" data-result-type="<?php echo esc_attr($key); ?>"><?php echo esc_html($label); ?></button><?php endforeach; ?>
       </div>
       <div id="edubd-status" class="edubd-status loading">Connecting to NU server…</div>
       <div id="edubd-native-form"></div>
@@ -453,7 +463,7 @@ function edubd_nu_result_shortcode() {
       const app=document.getElementById('edubd-nu-result-app'); if(!app)return;
       const ajaxUrl=<?php echo wp_json_encode($ajax); ?>, security=<?php echo wp_json_encode($nonce); ?>;
       const status=document.getElementById('edubd-status'), formRoot=document.getElementById('edubd-native-form'), output=document.getElementById('edubd-result-output');
-      let token='', active='honours', config=null;
+      let token='', active=<?php echo wp_json_encode($fixed?:'honours'); ?>, config=null;
       const esc=s=>String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
       const post=async data=>{const r=await fetch(ajaxUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:new URLSearchParams(data)});return r.json();};
       function msg(t,k=''){status.className='edubd-status '+k;status.textContent=t;status.style.display='block';}
@@ -468,7 +478,7 @@ function edubd_nu_result_shortcode() {
         if(yf&&yf.type!=='select') html+=field('exam_year','Exam Year','e.g. 2024','number');
         html+=field('roll','Roll Number','Enter Roll Number','text');
         html+=field('registration','Registration Number','Enter Registration Number','text');
-        if(config.captcha&&config.fields&&config.fields.captcha){html+=`<div class="edubd-field edubd-captcha"><label>Verification Code</label><div class="edubd-captcha-row">${config.captcha.image_data?`<img id="edubd-captcha-img" src="${config.captcha.image_data}" alt="NU verification">`:''}<button type="button" id="edubd-captcha-refresh" class="edubd-refresh">↻</button><input data-key="captcha" type="text" placeholder="Enter code"></div></div>`;}
+        if(config.captcha&&config.fields&&config.fields.captcha){html+=`<div class="edubd-field edubd-captcha"><label>${config.captcha.question?esc(config.captcha.question):'Verification Code'}</label><div class="edubd-captcha-row">${config.captcha.image_data?`<img id="edubd-captcha-img" src="${config.captcha.image_data}" alt="NU verification">`:''}<button type="button" id="edubd-captcha-refresh" class="edubd-refresh">↻</button><input data-key="captcha" type="text" placeholder="Enter code"></div></div>`;}
         html+='</div><div class="edubd-actions"><button type="button" class="edubd-submit" id="edubd-search">🔍 View Result</button><button type="button" class="edubd-reset" id="edubd-reset">Reset</button></div></div>';
         formRoot.innerHTML=html;
         document.getElementById('edubd-search').onclick=submit;
